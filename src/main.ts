@@ -101,6 +101,9 @@ function seg(key: string, current: string | number, options: [string | number, s
 const playBtn = (kind: string, midis: number[], label: string, extra = '') =>
   `<button type="button" class="btn" data-play="${kind}" data-midis="${midis.join(',')}" data-label="${label}" ${extra}>${label}</button>`
 
+const EXPAND_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>'
+const expandBtn = `<button type="button" class="expand" data-expand aria-label="Ingrandisci" title="Ingrandisci">${EXPAND_ICON}</button>`
+
 const intro = (title: string, body: string) => `<div class="intro"><h2>${title}</h2>${body}</div>`
 
 const marksOf = (notes: Note[], fingers?: number[], rootLetter = notes[0].letter) =>
@@ -122,8 +125,8 @@ function chordCard(rootName: string, q: Quality, inv: number) {
   const f = CHORD_FINGERS[inv]
   const enh = T.enharmonic(root)
   const title = `${N(root)} ${q === 'maj' ? 'maggiore' : 'minore'}`
-  return `<article class="card">
-    <header class="card-h"><h3>${title}</h3><span class="sym" title="Sigla">${T.chordSymbol(root, q, 'en')}</span></header>
+  return `<article class="card" data-expandable>
+    <header class="card-h"><h3>${title}</h3><span class="sym" title="Sigla">${T.chordSymbol(root, q, 'en')}</span>${expandBtn}</header>
     ${enh ? `<p class="enh">detto anche ${N(enh)} ${q === 'maj' ? 'maggiore' : 'minore'}</p>` : ''}
     ${keyboard(60, 83, marksOf(notes, f.rh, root.letter), `Accordo di ${title}`)}
     <p class="notes">${notes.map((n) => `<span${n.letter === root.letter ? ' class="r"' : ''}>${N(n)}</span>`).join('<i>·</i>')}</p>
@@ -176,8 +179,8 @@ function scaleCard(keyName: string, kind: ScaleKind) {
   const steps = notes.slice(1).map((n, i) => STEP_NAME[n.midi - notes[i].midi])
   const midis = notes.map((n) => n.midi)
 
-  return `<article class="card">
-    <header class="card-h"><h3>${title}</h3><span class="sym">${T.chordSymbol(root, kind === 'major' ? 'maj' : 'min', 'en')}</span></header>
+  return `<article class="card" data-expandable>
+    <header class="card-h"><h3>${title}</h3><span class="sym">${T.chordSymbol(root, kind === 'major' ? 'maj' : 'min', 'en')}</span>${expandBtn}</header>
     <p class="sig">${sig.notes.length ? `<b>${sig.notes.length} ${sig.sym}</b> in chiave: ${sig.notes.map(N).join(', ')}` : '<b>Nessuna alterazione</b> in chiave'}
       <span class="rel">· relativa ${kind === 'major' ? 'minore' : 'maggiore'}: ${N(rel)}${kind === 'major' ? 'm' : ''}</span></p>
     ${keyboard(midis[0], midis[7], marksOf(notes, fingOk ? fing[state.hand] : undefined), `Scala di ${title}`, 10)}
@@ -293,10 +296,11 @@ function renderExercises() {
         <label class="chk"><input type="checkbox" data-field="ex.metro"${ex.metro ? ' checked' : ''}> Metronomo</label>
         <label class="chk"><input type="checkbox" data-field="ex.loop"${ex.loop ? ' checked' : ''}> Ripeti</label>
       </div>
-      <button type="button" class="btn primary" id="ex-play">▶ Avvia</button>
+      <button type="button" class="btn primary" data-action="ex-play">▶ Avvia</button>
     </div>
-    <section class="card ex-view">
-      <header class="card-h"><h3>${pat.name} <small>· ${title}</small></h3></header>
+    <section class="card ex-view" data-expandable>
+      <header class="card-h"><h3>${pat.name} <small>· ${title}</small></h3>
+        <button type="button" class="btn primary modal-only" data-action="ex-play">▶ Avvia</button>${expandBtn}</header>
       <p class="desc">${pat.desc}</p>
       ${keyboard(Math.min(...midis), Math.max(...midis), marks, `${pat.name}, ${title}`, 1)}
       <ol class="chips">${seq.map((s, i) => `<li data-i="${i}">${s.map(N).join(' + ')}</li>`).join('')}</ol>
@@ -317,26 +321,33 @@ function renderExercises() {
     </div>`
 }
 
-function playExercise(btn: HTMLButtonElement) {
+/** Toggle the "playing" look on every button bound to `action` (on the page and in the modal). */
+function setActionButtons(action: string, playing: boolean, idleLabel: string) {
+  document.querySelectorAll<HTMLButtonElement>(`[data-action="${action}"]`).forEach((b) => {
+    b.textContent = playing ? '■ Stop' : idleLabel
+    b.classList.toggle('playing', playing)
+  })
+}
+
+function playExercise() {
   if (player.playing) return player.stop()
-  const p = panel('esercizi')
-  const chips = [...p.querySelectorAll<HTMLElement>('.chips li')]
+  // La vista può essere duplicata nella modale: aggiorna tutte le copie
+  const views = [...document.querySelectorAll<HTMLElement>('.ex-view')]
+  const chips = views.flatMap((v) => [...v.querySelectorAll<HTMLElement>('.chips li')])
   const steps: Step[] = exerciseSteps().seq.map((s) => ({ notes: s.map((n) => n.midi), beats: 1 }))
-  btn.textContent = '■ Stop'
-  btn.classList.add('playing')
+  setActionButtons('ex-play', true, '▶ Avvia')
   player.play(steps, {
     bpm: state.ex.bpm,
     metronome: state.ex.metro,
     loop: state.ex.loop,
     onStep: (i, s) => {
-      highlight(p, s.notes)
-      chips.forEach((c, j) => c.classList.toggle('now', j === i))
+      views.forEach((v) => highlight(v, s.notes))
+      chips.forEach((c) => c.classList.toggle('now', Number(c.dataset.i) === i))
     },
     onEnd: () => {
-      highlight(p, [])
+      views.forEach((v) => highlight(v, []))
       chips.forEach((c) => c.classList.remove('now'))
-      btn.textContent = '▶ Avvia'
-      btn.classList.remove('playing')
+      setActionButtons('ex-play', false, '▶ Avvia')
     },
   })
 }
@@ -410,10 +421,12 @@ function renderProgressions() {
         <label class="chk"><input type="checkbox" data-field="prog.smooth"${pr.smooth ? ' checked' : ''}> Rivolti vicini</label>
         <label class="chk"><input type="checkbox" data-field="prog.metro"${pr.metro ? ' checked' : ''}> Metronomo</label>
       </div>
-      <button type="button" class="btn primary" id="prog-play">▶ Suona in loop</button>
+      <button type="button" class="btn primary" data-action="prog-play">▶ Suona in loop</button>
     </div>
+    <div class="prog-wrap" data-expandable>
     <section class="prog-head">
-      <h3>${prog.nick} <small>· ${keyTitle}</small></h3>
+      <header class="card-h"><h3>${prog.nick} <small>· ${keyTitle}</small></h3>
+        <button type="button" class="btn primary modal-only" data-action="prog-play">▶ Suona in loop</button>${expandBtn}</header>
       <p>${prog.desc}</p>
       <p class="seq">${chords.map((c) => `<span>${T.chordSymbol(c.root, c.q)}</span>`).join('<i>→</i>')}</p>
     </section>
@@ -421,44 +434,43 @@ function renderProgressions() {
       .map((c, i) => {
         const lowest = c.notes[0].letter
         const inv = lowest === c.root.letter ? 0 : lowest === T.mod(c.root.letter + 2, 7) ? 1 : 2
-        return `<article class="card prog-card" data-i="${i}">
-          <header class="card-h"><span class="roman">${c.roman}</span><h3>${T.chordSymbol(c.root, c.q)}</h3><span class="sym">${prog.chords.length > 4 ? `batt. ${i + 1}` : T.chordSymbol(c.root, c.q, 'en')}</span></header>
+        return `<article class="card prog-card" data-i="${i}" data-expandable>
+          <header class="card-h"><span class="roman">${c.roman}</span><h3>${T.chordSymbol(c.root, c.q)}</h3><span class="sym">${prog.chords.length > 4 ? `batt. ${i + 1}` : T.chordSymbol(c.root, c.q, 'en')}</span>${expandBtn}</header>
           ${keyboard(60, 83, marksOf(c.notes, undefined, c.root.letter), `Accordo ${c.roman}`)}
           <p class="notes">${c.notes.map((n) => `<span${n.letter === c.root.letter ? ' class="r"' : ''}>${N(n)}</span>`).join('<i>·</i>')}</p>
           <p class="fing"><span class="muted">${INV_NAME[inv]}</span> · <b>MS</b> ${N(c.root)}</p>
           <div class="actions">${playBtn('chord', c.notes.map((n) => n.midi), '▶', `data-bass="${48 + T.pc(c.root)}" aria-label="Ascolta ${T.chordSymbol(c.root, c.q)}"`)}</div>
         </article>`
       })
-      .join('')}</div>`
+      .join('')}</div>
+    </div>`
 }
 
-function playProgression(btn: HTMLButtonElement) {
+function playProgression() {
   if (player.playing) return player.stop()
-  const p = panel('giri')
-  const cards = [...p.querySelectorAll<HTMLElement>('.prog-card')]
+  const cards = [...document.querySelectorAll<HTMLElement>('.prog-card')]
   const { chords } = progressionChords()
   const steps: Step[] = chords.map((c) => ({
     notes: [48 + T.pc(c.root), ...c.notes.map((n) => n.midi)],
     beats: 4,
   }))
-  btn.textContent = '■ Stop'
-  btn.classList.add('playing')
+  setActionButtons('prog-play', true, '▶ Suona in loop')
   player.play(steps, {
     bpm: state.prog.bpm,
     metronome: state.prog.metro,
     loop: true,
     onStep: (i, s) =>
-      cards.forEach((c, j) => {
-        c.classList.toggle('now', j === i)
-        highlight(c, j === i ? s.notes : [])
+      cards.forEach((c) => {
+        const now = Number(c.dataset.i) === i
+        c.classList.toggle('now', now)
+        highlight(c, now ? s.notes : [])
       }),
     onEnd: () => {
       cards.forEach((c) => {
         c.classList.remove('now')
         highlight(c, [])
       })
-      btn.textContent = '▶ Suona in loop'
-      btn.classList.remove('playing')
+      setActionButtons('prog-play', false, '▶ Suona in loop')
     },
   })
 }
@@ -511,11 +523,41 @@ document.querySelector('#app')!.innerHTML = `
       `<button type="button" role="tab" id="t-${id}" aria-controls="p-${id}" data-tab="${id}"><span class="n">${i + 1}</span>${label}</button>`,
   ).join('')}</nav>
   <main>${TABS.map(([id]) => `<section class="panel" role="tabpanel" id="p-${id}" aria-labelledby="t-${id}" hidden></section>`).join('')}</main>
+  <dialog class="modal" id="modal">
+    <button type="button" class="expand close" data-close aria-label="Chiudi" title="Chiudi (Esc)">✕</button>
+    <div class="modal-body"></div>
+  </dialog>
   <footer>Premi ▶ per ascoltare (alza il volume). 1 = pollice · 2 = indice · 3 = medio · 4 = anulare · 5 = mignolo · MD = mano destra · MS = mano sinistra</footer>`
 
 renderAll()
 const fromHash = location.hash.slice(1) as TabId
 showTab(TABS.some(([t]) => t === fromHash) ? fromHash : state.tab)
+
+// ---------- modale ----------
+
+const modal = document.getElementById('modal') as HTMLDialogElement
+
+/** Show an enlarged copy of `el`; its play buttons keep working through the shared click handler. */
+function openModal(el: HTMLElement) {
+  player.stop()
+  const copy = el.cloneNode(true) as HTMLElement
+  copy.querySelectorAll('[data-expand]').forEach((b) => b.remove())
+  copy.removeAttribute('data-expandable')
+  modal.setAttribute('aria-label', el.querySelector('h3')?.textContent?.trim() ?? 'Dettaglio')
+  modal.querySelector('.modal-body')!.replaceChildren(copy)
+  modal.showModal()
+}
+
+// L'evento close arriva in modo asincrono: se nel frattempo la modale è stata riaperta, non svuotarla
+modal.addEventListener('close', () => {
+  if (modal.open) return
+  player.stop()
+  modal.querySelector('.modal-body')!.replaceChildren()
+})
+// Clic sullo sfondo fuori dal riquadro: chiudi
+modal.addEventListener('click', (e) => {
+  if (e.target === modal) modal.close()
+})
 
 // ---------- eventi ----------
 
@@ -560,8 +602,10 @@ document.addEventListener('click', (e) => {
   if (set) return setOption(set.dataset.set!, set.dataset.value!)
 
   const btn = target.closest<HTMLButtonElement>('button')
-  if (btn?.id === 'ex-play') return playExercise(btn)
-  if (btn?.id === 'prog-play') return playProgression(btn)
+  if (btn?.dataset.action === 'ex-play') return playExercise()
+  if (btn?.dataset.action === 'prog-play') return playProgression()
+  if (btn?.hasAttribute('data-expand')) return openModal(btn.closest<HTMLElement>('[data-expandable]')!)
+  if (btn?.hasAttribute('data-close')) return modal.close()
   if (!btn?.dataset.play) return
 
   if (btn.classList.contains('playing')) return player.stop()
